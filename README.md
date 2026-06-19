@@ -94,8 +94,10 @@ Each model is then badged in the picker:
 - 🔴 **Slow** — exceeds total memory → swaps to disk, not practical for chat
 
 The header strip shows your detected GPU/RAM and offers a one-click switch to the
-recommended model. The recommendation prefers the **most capable model that still
-runs fast** on your machine.
+recommended model. The recommendation prefers the **most capable model that fits
+the GPU with headroom to spare** — a model that maxes out VRAM (shown as "tight
+VRAM") leaves no room to grow the context window, so a slightly smaller, roomier
+model is preferred as the default.
 
 ## Conversation, context window & memory
 
@@ -107,7 +109,7 @@ manages that for you ([`lib/context.ts`](lib/context.ts)):
 
 - **System prompt** — sets the assistant's behaviour. Edit it via the ⚙ button;
   it's saved per-browser and applied to your next message.
-- **Token budget** — each request is capped to `num_ctx` (default 8,192 tokens),
+- **Token budget** — each request is capped to `num_ctx` (default 16,384 tokens),
   always reserving room for the reply. The most recent turns that fit are sent.
 - **Rolling memory** — when older turns fall outside the budget, they're
   automatically summarized (via [`/api/summarize`](app/api/summarize/route.ts))
@@ -116,7 +118,8 @@ manages that for you ([`lib/context.ts`](lib/context.ts)):
 
 To use a larger raw context instead of (or alongside) summarization, raise
 `maxNumCtx` in [`lib/ollama.ts`](lib/ollama.ts) — bigger windows use more VRAM and
-slow down prompt processing, so 8K is a balanced default.
+slow down prompt processing, so 16K is a balanced default for ~12B models on a
+24 GB GPU (gemma3:12b uses only ~8.4 GB even at 16K, leaving plenty of headroom).
 
 ## Configuration
 
