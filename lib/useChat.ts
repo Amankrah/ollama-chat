@@ -2,11 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CHAT_DEFAULTS, type OllamaChatChunk } from "@/lib/ollama";
-import {
-  buildContext,
-  resolveNumCtx,
-  serializeForSummary,
-} from "@/lib/context";
+import { buildContext, serializeForSummary } from "@/lib/context";
 
 /** A message as the UI holds it. Images are kept as data URLs for rendering. */
 export interface ChatMessage {
@@ -28,11 +24,12 @@ function nextId(): string {
 
 export interface UseChatOptions {
   model: string | null;
-  contextLength?: number;
+  /** Context window for requests, chosen adaptively for the active model. */
+  numCtx: number;
   systemPrompt: string;
 }
 
-export function useChat({ model, contextLength, systemPrompt }: UseChatOptions) {
+export function useChat({ model, numCtx, systemPrompt }: UseChatOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [summary, setSummary] = useState(""); // rolling long-term memory
   const [isStreaming, setIsStreaming] = useState(false);
@@ -116,7 +113,7 @@ export function useChat({ model, contextLength, systemPrompt }: UseChatOptions) 
           history,
           systemPrompt,
           summary,
-          contextLength,
+          numCtx,
         });
 
         if (built.dropped.length > 0) {
@@ -143,7 +140,7 @@ export function useChat({ model, contextLength, systemPrompt }: UseChatOptions) 
                   history,
                   systemPrompt,
                   summary: updated,
-                  contextLength,
+                  numCtx,
                 });
               }
             }
@@ -164,7 +161,7 @@ export function useChat({ model, contextLength, systemPrompt }: UseChatOptions) 
             model,
             messages: built.messages,
             options: {
-              num_ctx: resolveNumCtx(contextLength),
+              num_ctx: numCtx,
               temperature: CHAT_DEFAULTS.temperature,
             },
           }),
@@ -224,7 +221,7 @@ export function useChat({ model, contextLength, systemPrompt }: UseChatOptions) 
         setStatus("idle");
       }
     },
-    [messages, model, isStreaming, systemPrompt, summary, contextLength],
+    [messages, model, isStreaming, systemPrompt, summary, numCtx],
   );
 
   return {

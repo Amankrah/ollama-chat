@@ -61,7 +61,7 @@ export async function POST(req: Request) {
           { role: "user", content: user },
         ],
         stream: false,
-        options: { temperature: 0.2, num_ctx: CHAT_DEFAULTS.maxNumCtx },
+        options: { temperature: 0.2, num_ctx: CHAT_DEFAULTS.fallbackNumCtx },
       }),
       signal: req.signal,
     });

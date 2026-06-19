@@ -24,6 +24,9 @@ export interface OllamaModel {
   capabilities?: string[];
   /** Native context window in tokens (from model_info). Filled in by /api/show. */
   contextLength?: number;
+  /** Estimated KV-cache bytes per token (f16), from architecture in model_info.
+   *  Used to size the context window to available VRAM. */
+  kvBytesPerToken?: number;
   details?: {
     family?: string;
     parameter_size?: string;
@@ -39,11 +42,17 @@ export const CHAT_DEFAULTS = {
     "Be clear, accurate, and concise. Use Markdown, and fenced code blocks for code. " +
     "If you are unsure or lack information, say so rather than inventing an answer. " +
     "When the user attaches an image, describe and reason about what you actually see in it.",
-  /** Context window we ask Ollama to use. Capped to keep memory/latency sane even
-   *  when a model technically supports far more (e.g. 128K). 16K is a comfortable
-   *  default for ~12B models on a 24 GB GPU; the rolling summary covers anything
-   *  beyond it. Raise toward a model's native limit if you have VRAM to spare. */
-  maxNumCtx: 16384,
+  /** Context window is chosen adaptively per model (native limit + free VRAM).
+   *  These bound that calculation: */
+  // Used when VRAM/architecture can't be detected (e.g. CPU-only, missing info).
+  fallbackNumCtx: 8192,
+  // Never go below this, even on tight hardware.
+  minNumCtx: 4096,
+  // Upper bound regardless of VRAM — guards against very slow prompt processing
+  // at huge contexts. The rolling summary covers anything beyond it.
+  ctxCeiling: 32768,
+  // VRAM kept free (bytes) beyond model weights + KV cache, for overhead.
+  vramSafetyMarginBytes: 1024 ** 3,
   /** Tokens held back within num_ctx for the model's reply. */
   responseReserveTokens: 1536,
   /** Rough bytes-per-token for estimating prompt size without a real tokenizer. */

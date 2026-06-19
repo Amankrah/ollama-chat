@@ -3,7 +3,8 @@
 A local, multimodal chat interface for [Ollama](https://ollama.com). Install Ollama,
 pull a model, run this app — your conversations and images never leave your machine.
 
-- **Streaming** responses, token by token
+- **Streaming** responses, token by token, with **rich Markdown** rendering
+  (headings, lists, tables, code blocks, links — via `react-markdown` + GFM)
 - **Multimodal** — attach images to vision-capable models (e.g. `llava`)
 - **Hardware-aware model picker** — detects your CPU/RAM/GPU and recommends the
   best installed model, tagging each as 🟢 fast / 🟡 ok / 🔴 slow for your machine
@@ -109,17 +110,23 @@ manages that for you ([`lib/context.ts`](lib/context.ts)):
 
 - **System prompt** — sets the assistant's behaviour. Edit it via the ⚙ button;
   it's saved per-browser and applied to your next message.
-- **Token budget** — each request is capped to `num_ctx` (default 16,384 tokens),
-  always reserving room for the reply. The most recent turns that fit are sent.
+- **Adaptive context window** — `num_ctx` is chosen per model: the largest window
+  that fits the model's native limit, the VRAM left after its weights (so the KV
+  cache stays on the GPU), and a latency ceiling — whichever is smallest. On a
+  24 GB GPU this gives e.g. llava 32,768, gemma3:12b ~31,744, mistral-small3.1
+  ~23,552, while a model too big for VRAM falls back to a safe 4,096. The window
+  in use is shown in the header (`🪟 … ctx`) and the ⚙ panel.
+- **Token budget** — within that window each request reserves room for the reply
+  and sends the most recent turns that fit.
 - **Rolling memory** — when older turns fall outside the budget, they're
   automatically summarized (via [`/api/summarize`](app/api/summarize/route.ts))
   into a running "memory" that's prepended to every request. The header shows
   **💾 memory active** once this kicks in, so long chats keep their context.
 
-To use a larger raw context instead of (or alongside) summarization, raise
-`maxNumCtx` in [`lib/ollama.ts`](lib/ollama.ts) — bigger windows use more VRAM and
-slow down prompt processing, so 16K is a balanced default for ~12B models on a
-24 GB GPU (gemma3:12b uses only ~8.4 GB even at 16K, leaving plenty of headroom).
+The KV-cache estimate ([`lib/context.ts`](lib/context.ts) `adaptiveNumCtx`) is
+deliberately conservative (it ignores tricks like sliding-window attention), so
+real usage tends to be lower. Tune the bounds — `minNumCtx`, `ctxCeiling`,
+`vramSafetyMarginBytes` — in [`lib/ollama.ts`](lib/ollama.ts).
 
 ## Configuration
 

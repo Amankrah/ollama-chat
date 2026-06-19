@@ -9,9 +9,11 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { CHAT_DEFAULTS, type OllamaModel } from "@/lib/ollama";
 import { useChat, type ChatMessage } from "@/lib/useChat";
-import { resolveNumCtx } from "@/lib/context";
+import { adaptiveNumCtx } from "@/lib/context";
 import {
   fitForModel,
   recommendModel,
@@ -45,31 +47,87 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-/** Render assistant/user text, splitting fenced ``` code blocks out into <pre>. */
-function MessageContent({ content }: { content: string }) {
-  const parts = content.split(/(```[\s\S]*?```)/g);
-  return (
-    <div className="space-y-3">
-      {parts.map((part, i) => {
-        if (part.startsWith("```") && part.endsWith("```")) {
-          const inner = part.slice(3, -3).replace(/^[a-zA-Z0-9]*\n/, "");
-          return (
-            <pre
-              key={i}
-              className="overflow-x-auto rounded-lg bg-black/80 p-3 text-sm text-zinc-100 dark:bg-black"
-            >
-              <code className="font-mono">{inner}</code>
-            </pre>
-          );
-        }
-        if (!part) return null;
-        return (
-          <p key={i} className="whitespace-pre-wrap break-words leading-7">
-            {part}
-          </p>
-        );
-      })}
+// Tailwind-styled element mapping so Markdown from the model renders cleanly.
+const markdownComponents: Components = {
+  p: ({ children }) => (
+    <p className="my-2 leading-7 break-words first:mt-0 last:mb-0">{children}</p>
+  ),
+  h1: ({ children }) => (
+    <h1 className="mt-4 mb-2 text-xl font-semibold first:mt-0">{children}</h1>
+  ),
+  h2: ({ children }) => (
+    <h2 className="mt-4 mb-2 text-lg font-semibold first:mt-0">{children}</h2>
+  ),
+  h3: ({ children }) => (
+    <h3 className="mt-3 mb-1.5 text-base font-semibold first:mt-0">{children}</h3>
+  ),
+  h4: ({ children }) => (
+    <h4 className="mt-3 mb-1.5 font-semibold first:mt-0">{children}</h4>
+  ),
+  ul: ({ children }) => (
+    <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>
+  ),
+  li: ({ children }) => (
+    <li className="leading-7 marker:text-zinc-400">{children}</li>
+  ),
+  a: ({ children, href }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-blue-600 underline underline-offset-2 break-words dark:text-blue-400"
+    >
+      {children}
+    </a>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote className="my-2 border-l-4 border-zinc-300 pl-3 text-zinc-600 italic dark:border-zinc-600 dark:text-zinc-300">
+      {children}
+    </blockquote>
+  ),
+  hr: () => <hr className="my-4 border-zinc-200 dark:border-zinc-700" />,
+  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+  pre: ({ children }) => (
+    <pre className="my-2 overflow-x-auto rounded-lg bg-zinc-900 p-3 text-sm text-zinc-100 dark:bg-black">
+      {children}
+    </pre>
+  ),
+  code: ({ className, children }) => {
+    const text = String(children);
+    const isBlock = /language-/.test(className ?? "") || text.includes("\n");
+    if (isBlock) return <code className="font-mono">{children}</code>;
+    return (
+      <code className="rounded bg-black/10 px-1.5 py-0.5 font-mono text-[0.85em] dark:bg-white/15">
+        {children}
+      </code>
+    );
+  },
+  table: ({ children }) => (
+    <div className="my-2 overflow-x-auto">
+      <table className="w-full border-collapse text-sm">{children}</table>
     </div>
+  ),
+  th: ({ children }) => (
+    <th className="border border-zinc-300 bg-zinc-100 px-2 py-1 text-left font-semibold dark:border-zinc-700 dark:bg-zinc-800">
+      {children}
+    </th>
+  ),
+  td: ({ children }) => (
+    <td className="border border-zinc-300 px-2 py-1 dark:border-zinc-700">
+      {children}
+    </td>
+  ),
+};
+
+/** Render assistant Markdown (GFM) with clean, themed styling. */
+function MessageContent({ content }: { content: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      {content}
+    </ReactMarkdown>
   );
 }
 
@@ -98,7 +156,13 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           </div>
         )}
         {message.content ? (
-          <MessageContent content={message.content} />
+          isUser ? (
+            <p className="leading-7 break-words whitespace-pre-wrap">
+              {message.content}
+            </p>
+          ) : (
+            <MessageContent content={message.content} />
+          )
         ) : (
           <span className="inline-block h-4 w-4 animate-pulse rounded-full bg-current opacity-40" />
         )}
@@ -124,18 +188,19 @@ export default function Chat() {
     [models, model],
   );
 
+  // Context window sized adaptively to the active model + this machine's VRAM.
+  const numCtx = useMemo(
+    () => adaptiveNumCtx(activeModel, system),
+    [activeModel, system],
+  );
+
   const { messages, isStreaming, status, error, hasMemory, send, stop, clear } =
-    useChat({
-      model,
-      contextLength: activeModel?.contextLength,
-      systemPrompt,
-    });
+    useChat({ model, numCtx, systemPrompt });
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const supportsVision = activeModel?.capabilities?.includes("vision") ?? false;
   const activeFit = activeModel ? fitForModel(activeModel, system) : null;
-  const numCtx = resolveNumCtx(activeModel?.contextLength);
 
   const gpuLabel = useMemo(() => {
     if (!system) return null;
@@ -331,9 +396,14 @@ export default function Chat() {
               className="w-full resize-y rounded-lg border border-zinc-300 bg-white p-2 text-sm outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-950"
             />
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Context window: {numCtx.toLocaleString()} tokens · older turns are
-              auto-summarized into long-term memory when they no longer fit.
-              Changes apply to your next message.
+              Context window: {numCtx.toLocaleString()} tokens — sized
+              automatically to {activeModel?.name ?? "this model"}
+              {activeModel?.contextLength
+                ? ` (native ${activeModel.contextLength.toLocaleString()})`
+                : ""}{" "}
+              and your available VRAM. Older turns are auto-summarized into
+              long-term memory when they no longer fit. Changes apply to your
+              next message.
             </p>
           </div>
         </div>

@@ -7,7 +7,8 @@
 // recent turns as fit, reporting which older turns dropped out (so they can be
 // folded into the summary).
 
-import { CHAT_DEFAULTS, type OllamaMessage } from "@/lib/ollama";
+import { CHAT_DEFAULTS, type OllamaMessage, type OllamaModel } from "@/lib/ollama";
+import { estimateFootprint, totalVram, type SystemInfo } from "@/lib/recommend";
 
 /** Minimal message shape this module needs (compatible with the UI's ChatMessage). */
 export interface BudgetMessage {
@@ -30,9 +31,39 @@ export function estimateTokens(msg: { content: string; images?: string[] }): num
   return textTokens + imageTokens + 4; // +4 for role/formatting overhead
 }
 
-/** The num_ctx we'll request for a model, capped for sane memory/latency. */
-export function resolveNumCtx(contextLength?: number): number {
-  return Math.min(contextLength || CHAT_DEFAULTS.maxNumCtx, CHAT_DEFAULTS.maxNumCtx);
+/**
+ * Choose the context window (num_ctx) adaptively for a model on this machine.
+ *
+ * It's the largest window that fits within the model's native limit, the VRAM
+ * left after the model's weights (so the KV cache won't spill to CPU), and a
+ * latency ceiling — whichever is smallest. Falls back to a fixed modest window
+ * when VRAM or architecture details aren't available (e.g. CPU-only).
+ */
+export function adaptiveNumCtx(
+  model: OllamaModel | undefined,
+  system: SystemInfo | null,
+): number {
+  const native = model?.contextLength;
+  const kvPerToken = model?.kvBytesPerToken;
+  const fallback = Math.min(
+    native || CHAT_DEFAULTS.fallbackNumCtx,
+    CHAT_DEFAULTS.fallbackNumCtx,
+  );
+
+  if (!model || !system || !native || !kvPerToken) return fallback;
+
+  const vram = totalVram(system);
+  if (vram <= 0) return fallback; // CPU-only — keep it modest.
+
+  const headroom =
+    vram - estimateFootprint(model.size) - CHAT_DEFAULTS.vramSafetyMarginBytes;
+  if (headroom <= 0) return CHAT_DEFAULTS.minNumCtx;
+
+  const maxFromVram = Math.floor(headroom / kvPerToken);
+  let ctx = Math.min(native, maxFromVram, CHAT_DEFAULTS.ctxCeiling);
+  ctx = Math.min(Math.max(ctx, CHAT_DEFAULTS.minNumCtx), native);
+  // Round down to a tidy multiple of 1024.
+  return Math.floor(ctx / 1024) * 1024 || CHAT_DEFAULTS.minNumCtx;
 }
 
 export interface BuiltContext {
@@ -56,10 +87,10 @@ export function buildContext(opts: {
   history: BudgetMessage[];
   systemPrompt: string;
   summary: string;
-  contextLength?: number;
+  /** The context window (num_ctx) the request will use. */
+  numCtx: number;
 }): BuiltContext {
-  const { history, systemPrompt, summary, contextLength } = opts;
-  const numCtx = resolveNumCtx(contextLength);
+  const { history, systemPrompt, summary, numCtx } = opts;
   let budget = numCtx - CHAT_DEFAULTS.responseReserveTokens;
 
   const head: OllamaMessage[] = [];

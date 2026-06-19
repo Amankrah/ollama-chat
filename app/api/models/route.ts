@@ -43,17 +43,36 @@ export async function GET() {
             capabilities?: string[];
             model_info?: Record<string, unknown>;
           };
-          // The context length key is namespaced by architecture, e.g.
-          // "llama.context_length" or "llama4.context_length".
-          const ctxEntry = Object.entries(info.model_info ?? {}).find(([k]) =>
-            k.endsWith(".context_length"),
-          );
-          const contextLength =
-            typeof ctxEntry?.[1] === "number" ? ctxEntry[1] : undefined;
+          const mi = info.model_info ?? {};
+          // Keys are namespaced by architecture (e.g. "llama.context_length",
+          // "gemma3.block_count"), so match by suffix.
+          const num = (suffix: string): number | undefined => {
+            for (const [k, v] of Object.entries(mi)) {
+              if (k.endsWith(suffix) && typeof v === "number") return v;
+            }
+            return undefined;
+          };
+
+          const contextLength = num(".context_length");
+          const blockCount = num(".block_count");
+          const headCount = num(".attention.head_count");
+          const headCountKv = num(".attention.head_count_kv") ?? headCount;
+          const embedding = num(".embedding_length");
+          const headDim =
+            num(".attention.key_length") ??
+            (embedding && headCount ? embedding / headCount : undefined);
+          // KV cache per token (f16): layers × kv_heads × headDim × 2 (K and V)
+          // × 2 bytes.
+          const kvBytesPerToken =
+            blockCount && headCountKv && headDim
+              ? blockCount * headCountKv * headDim * 2 * 2
+              : undefined;
+
           return {
             ...m,
             capabilities: info.capabilities ?? [],
             contextLength,
+            kvBytesPerToken,
           };
         }
       } catch {
